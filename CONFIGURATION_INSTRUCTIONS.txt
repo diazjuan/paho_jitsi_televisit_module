@@ -1,0 +1,50 @@
+PAHO Jitsi Televisit - Configuration Instructions
+==================================================
+
+Your OpenEMR URL: http://169.61.173.4/
+
+QUICK CONFIGURATION (Recommended):
+----------------------------------
+1. Open this URL in your browser:
+   http://169.61.173.4/interface/modules/custom_modules/paho_jitsi_televisit/quick_config.php
+
+2. Fill in the form:
+   - Jitsi Base URL: https://169.61.173.4:8440
+   - Televisit Category: Select "Televisit" from the dropdown
+   
+3. Click "Save Configuration"
+
+MANUAL SQL CONFIGURATION (Alternative):
+----------------------------------------
+If the quick config doesn't work, run these SQL commands:
+
+1. Connect to MySQL:
+   mysql -u root -p
+   USE openemr;
+
+2. Set Jitsi Base URL:
+   INSERT INTO globals (gl_name, gl_value) 
+   VALUES ('paho_jitsi_base_url', 'https://169.61.173.4:8440')
+   ON DUPLICATE KEY UPDATE gl_value = 'https://169.61.173.4:8440';
+
+3. Find Televisit category ID:
+   SELECT pc_catid, pc_catname FROM openemr_postcalendar_categories 
+   WHERE pc_constant_id = 'televisit';
+
+4. Set category ID (replace X with the pc_catid from step 3):
+   INSERT INTO globals (gl_name, gl_value) 
+   VALUES ('paho_jitsi_televisit_category_id', 'X')
+   ON DUPLICATE KEY UPDATE gl_value = 'X';
+
+5. Verify:
+   SELECT gl_name, gl_value FROM globals WHERE gl_name LIKE 'paho_jitsi%';
+
+VERIFY CONFIGURATION:
+---------------------
+After configuration, verify settings:
+SELECT gl_name, gl_value FROM globals WHERE gl_name LIKE 'paho_jitsi%';
+
+You should see:
+- paho_jitsi_base_url = https://169.61.173.4:8440
+- paho_jitsi_televisit_category_id = (category ID number)
+- paho_jitsi_room_naming = deterministic

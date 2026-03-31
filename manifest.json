@@ -1,0 +1,16 @@
+{
+    "name": "PAHO Jitsi Televisit",
+    "version": "1.0.0",
+    "description": "Teleconsultation module using Jitsi Meet with embedded video views for providers and patients",
+    "author": "PAIO Medical Systems",
+    "license": "GPL-3.0",
+    "type": "clinical",
+    "acl": [
+        {
+            "section": "patients",
+            "value": "med",
+            "description": "Televisit"
+        }
+    ]
+}
+
