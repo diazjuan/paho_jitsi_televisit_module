@@ -157,6 +157,34 @@ class TelevisitRoomService
     }
 
     /**
+     * Resolve encounter row for this televisit room when encounter_id is set and matches the patient.
+     * Avoids treating "any encounter today" as belonging to this appointment.
+     *
+     * @param array<string,mixed> $room Row from paho_jitsi_televisit_rooms
+     * @param int|string|null     $pid  Patient id
+     * @return array<string,mixed>|null array with keys encounter, id or null
+     */
+    public static function getLinkedEncounterRow(array $room, $pid): ?array
+    {
+        if (empty($room['encounter_id']) || $pid === null || $pid === '') {
+            return null;
+        }
+        $enc = (int) $room['encounter_id'];
+        $pidInt = (int) $pid;
+        if ($enc <= 0 || $pidInt <= 0) {
+            return null;
+        }
+        $row = sqlQuery(
+            'SELECT fe.encounter, fe.id FROM form_encounter fe WHERE fe.pid = ? AND fe.encounter = ? LIMIT 1',
+            [$pidInt, $enc]
+        );
+        if (empty($row) || empty($row['encounter'])) {
+            return null;
+        }
+        return $row;
+    }
+
+    /**
      * Link encounter to room
      *
      * @param int $pcEid Appointment ID

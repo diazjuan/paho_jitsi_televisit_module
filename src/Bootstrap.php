@@ -16,6 +16,7 @@ namespace OpenEMR\Modules\PahoJitsiTelevisit;
 use OpenEMR\Events\Appointments\AppointmentSetEvent;
 use OpenEMR\Events\Appointments\AppointmentRenderEvent;
 use OpenEMR\Events\PatientPortal\AppointmentFilterEvent;
+use OpenEMR\Events\Core\TemplatePageEvent;
 use OpenEMR\Events\Core\TwigEnvironmentEvent;
 use OpenEMR\Modules\PahoJitsiTelevisit\Services\TelevisitConfigService;
 use OpenEMR\Modules\PahoJitsiTelevisit\Services\TelevisitRoomService;
@@ -60,12 +61,6 @@ class Bootstrap
             [$this, 'injectAppointmentButton']
         );
 
-        // PATCH: Also add button to action bar area (before Save/Delete buttons)
-        $this->eventDispatcher->addListener(
-            AppointmentRenderEvent::RENDER_BEFORE_ACTION_BAR,
-            [$this, 'injectAppointmentButton']
-        );
-
         // Add televisit data to patient portal appointments
         $this->eventDispatcher->addListener(
             AppointmentFilterEvent::EVENT_NAME,
@@ -76,6 +71,12 @@ class Bootstrap
         $this->eventDispatcher->addListener(
             TwigEnvironmentEvent::EVENT_CREATED,
             [$this, 'registerTwigTemplates']
+        );
+
+        // New encounter form: duplicate warning uses PHP "today"; televisit opens by appointment day (calenc).
+        $this->eventDispatcher->addListener(
+            TemplatePageEvent::RENDER_EVENT,
+            [$this, 'adjustNewpatientDuplicateForCalendarContext']
         );
     }
 
@@ -210,20 +211,22 @@ class Bootstrap
         $encounterExists = false;
         
         if ($pid) {
-            // Check if encounter exists for today linked to this appointment
-            $encounter = sqlQuery(
-                "SELECT fe.encounter, fe.id FROM form_encounter fe 
-                 WHERE fe.pid = ? AND fe.date = CURDATE() 
-                 ORDER BY fe.id DESC LIMIT 1",
-                [$pid]
-            );
-            
+            // Only treat as "existing encounter" when this room row links to form_encounter (encounter_id).
+            // Do not infer from "any encounter today" — that showed the wrong chart for this televisit appointment.
+            $encounter = TelevisitRoomService::getLinkedEncounterRow($room, $pid);
+
             if ($encounter) {
                 $encounterExists = true;
-                $encounterUrl = $GLOBALS['webroot'] . '/interface/patient_file/encounter/encounter_top.php?set_encounter=' . attr_url($encounter['encounter']) . '&set_pid=' . attr_url($pid);
+                $encounterUrl = $this->buildChromeShimUrl('patient_file/encounter/encounter_top.php', [
+                    'set_encounter' => $encounter['encounter'],
+                    'set_pid' => $pid,
+                ]);
             } else {
-                // Link to create new encounter form
-                $encounterUrl = $GLOBALS['webroot'] . '/interface/forms/newpatient/new.php?autoloaded=1&calenc=' . attr_url($pcEid) . '&pid=' . attr_url($pid);
+                $encounterUrl = $this->buildChromeShimUrl('forms/newpatient/new.php', [
+                    'autoloaded' => '1',
+                    'calenc' => $pcEid,
+                    'pid' => $pid,
+                ]);
             }
         }
         
@@ -360,6 +363,27 @@ class Bootstrap
     }
 
     /**
+     * Standalone-tab wrapper so core encounter JS sees top.restoreSession / top.jsGlobals / top.left_nav.
+     *
+     * @param string $innerPath Path under /interface/ (allow-listed)
+     * @param array<string, scalar> $query Forwarded as query string to inner page (plus inner=)
+     */
+    private function buildChromeShimUrl(string $innerPath, array $query): string
+    {
+        $allowed = [
+            'forms/newpatient/new.php',
+            'patient_file/encounter/encounter_top.php',
+        ];
+        if (!in_array($innerPath, $allowed, true)) {
+            $innerPath = 'forms/newpatient/new.php';
+        }
+        $query['inner'] = $innerPath;
+
+        return $GLOBALS['webroot'] . '/interface/modules/custom_modules/' . $this->moduleDirectoryName
+            . '/public/encounter_chrome_shim.php?' . http_build_query($query, '', '&', PHP_QUERY_RFC3986);
+    }
+
+    /**
      * Add televisit data to patient portal appointments
      *
      * @param AppointmentFilterEvent $event
@@ -402,6 +426,79 @@ class Bootstrap
         }
 
         $event->setAppointment($appointment);
+    }
+
+    /**
+     * When newpatient is opened with calenc (calendar event id), align duplicate-encounter detection with the
+     * appointment's pc_eventDate instead of the server's current calendar day. Core logic uses date('Y-m-d'),
+     * which produced false "visit already exists today" for televisit/unified flows on a different appointment day.
+     *
+     * @param TemplatePageEvent $event
+     */
+    public function adjustNewpatientDuplicateForCalendarContext(TemplatePageEvent $event): void
+    {
+        if ($event->getPageName() !== 'newpatient/common.php') {
+            return;
+        }
+
+        $calenc = $_GET['calenc'] ?? $_REQUEST['calenc'] ?? null;
+        if ($calenc === null || $calenc === '') {
+            return;
+        }
+
+        $pcEid = (int) $calenc;
+        if ($pcEid <= 0) {
+            return;
+        }
+
+        $appt = sqlQuery(
+            'SELECT pc_eventDate FROM openemr_postcalendar_events WHERE pc_eid = ?',
+            [$pcEid]
+        );
+        $eventDate = $appt['pc_eventDate'] ?? '';
+        if ($eventDate === '' || $eventDate === null) {
+            return;
+        }
+        $eventDateStr = (string) $eventDate;
+        if (strpos($eventDateStr, '0000-00-00') === 0) {
+            return;
+        }
+
+        $twigVars = $event->getTwigVariables();
+        if (!empty($twigVars['viewmode'])) {
+            return;
+        }
+
+        $pid = $twigVars['pid'] ?? null;
+        if ($pid === null || $pid === '' || (int) $pid <= 0) {
+            return;
+        }
+
+        $pid = (int) $pid;
+        $dayStart = $eventDateStr . ' 00:00:00';
+        $dayEnd = $eventDateStr . ' 23:59:59';
+
+        $erow = sqlQuery(
+            "SELECT fe.encounter, fe.date FROM form_encounter AS fe, forms AS f WHERE " .
+            "fe.pid = ? AND fe.date >= ? AND fe.date <= ? AND " .
+            "f.formdir = 'newpatient' AND f.form_id = fe.id AND f.deleted = 0 " .
+            "ORDER BY fe.encounter DESC LIMIT 1",
+            [$pid, $dayStart, $dayEnd]
+        );
+
+        $duplicate = ['isDuplicate' => false];
+        if (!empty($erow['encounter'])) {
+            $datePart = substr((string) $erow['date'], 0, 10);
+            $formatted = oeFormatShortDate($datePart);
+            $duplicate = [
+                'isDuplicate' => true,
+                'encounter' => $erow['encounter'],
+                'date' => $formatted,
+                'dateStr' => $formatted,
+            ];
+        }
+
+        $event->setTwigVariables(['duplicate' => $duplicate]);
     }
 
     /**

@@ -29,16 +29,15 @@ $classLoader->registerNamespaceIfNotExists(
 use OpenEMR\Modules\PahoJitsiTelevisit\Services\TelevisitRoomService;
 use OpenEMR\Modules\PahoJitsiTelevisit\Services\TelevisitConfigService;
 
-// Function to get absolute HTTPS URL
+// Absolute URL for same-origin iframes/assets (must match page scheme or browser load fails).
 function getAbsoluteHttpsUrl($relativePath) {
-    // Determine if we're on HTTPS
-    $isHttps = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') 
+    $isHttps = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
                || (!empty($_SERVER['HTTP_X_FORWARDED_PROTO']) && $_SERVER['HTTP_X_FORWARDED_PROTO'] === 'https')
                || (!empty($_SERVER['REQUEST_SCHEME']) && $_SERVER['REQUEST_SCHEME'] === 'https')
-               || (isset($_SERVER['SERVER_PORT']) && $_SERVER['SERVER_PORT'] == 443);
-    
-    $scheme = $isHttps ? 'https://' : 'https://'; // Force HTTPS
-    $host = $_SERVER['HTTP_HOST'] ?? $_SERVER['SERVER_NAME'] ?? '169.61.173.4';
+               || (isset($_SERVER['SERVER_PORT']) && (int) $_SERVER['SERVER_PORT'] === 443);
+
+    $scheme = $isHttps ? 'https://' : 'http://';
+    $host = $_SERVER['HTTP_HOST'] ?? $_SERVER['SERVER_NAME'] ?? 'localhost';
     
     // Remove port if it's standard HTTPS port
     if (strpos($host, ':443') !== false) {
@@ -86,6 +85,7 @@ try {
 }
 
 try {
+    $encounterNewTabShimUrl = '';
     // Get patient ID and encounter info
     $appointment = sqlQuery(
         "SELECT pc_pid, pc_aid FROM openemr_postcalendar_events WHERE pc_eid = ?",
@@ -97,20 +97,28 @@ try {
     $encounterExists = false;
 
     if ($pid) {
-        // Check if encounter exists for today
-        $encounter = sqlQuery(
-            "SELECT fe.encounter, fe.id FROM form_encounter fe 
-             WHERE fe.pid = ? AND DATE(fe.date) = CURDATE() 
-             ORDER BY fe.id DESC LIMIT 1",
-            [$pid]
-        );
-        
+        $chromeShimBase = $GLOBALS['webroot'] . '/interface/modules/custom_modules/' . basename(dirname(__DIR__)) . '/public/encounter_chrome_shim.php';
+        // Only open an existing encounter when this televisit room is explicitly linked (paho_jitsi_televisit_rooms.encounter_id).
+        // A blanket "any encounter today" match was wrong for televisit: it showed unrelated visits for the same patient.
+        $encounter = TelevisitRoomService::getLinkedEncounterRow($room, $pid);
+
         if ($encounter) {
             $encounterExists = true;
             $encounterUrl = getAbsoluteHttpsUrl('/interface/patient_file/encounter/encounter_top.php?set_encounter=' . attr_url($encounter['encounter']) . '&set_pid=' . attr_url($pid));
+            $encounterNewTabShimUrl = $chromeShimBase . '?' . http_build_query([
+                'inner' => 'patient_file/encounter/encounter_top.php',
+                'set_encounter' => $encounter['encounter'],
+                'set_pid' => $pid,
+            ], '', '&', PHP_QUERY_RFC3986);
         } else {
             // Link to create new encounter form
             $encounterUrl = getAbsoluteHttpsUrl('/interface/forms/newpatient/new.php?autoloaded=1&calenc=' . attr_url($pcEid) . '&pid=' . attr_url($pid));
+            $encounterNewTabShimUrl = $chromeShimBase . '?' . http_build_query([
+                'inner' => 'forms/newpatient/new.php',
+                'autoloaded' => '1',
+                'calenc' => $pcEid,
+                'pid' => $pid,
+            ], '', '&', PHP_QUERY_RFC3986);
         }
     }
 } catch (\Exception $e) {
@@ -118,6 +126,16 @@ try {
     // Continue with empty encounter URL - user can still use Jitsi
     $pid = $room['pid'] ?? null;
     $encounterUrl = $pid ? getAbsoluteHttpsUrl('/interface/forms/newpatient/new.php?autoloaded=1&calenc=' . attr_url($pcEid) . '&pid=' . attr_url($pid)) : '';
+    $encounterNewTabShimUrl = '';
+    if ($pid) {
+        $encounterNewTabShimUrl = $GLOBALS['webroot'] . '/interface/modules/custom_modules/' . basename(dirname(__DIR__)) . '/public/encounter_chrome_shim.php'
+            . '?' . http_build_query([
+                'inner' => 'forms/newpatient/new.php',
+                'autoloaded' => '1',
+                'calenc' => $pcEid,
+                'pid' => $pid,
+            ], '', '&', PHP_QUERY_RFC3986);
+    }
     $encounterExists = false;
 }
 
@@ -287,6 +305,91 @@ try {
     </style>
 </head>
 <body>
+    <script>
+<?php require $GLOBALS['srcdir'] . '/restoreSession.php'; ?>
+if (typeof window.restoreSession !== 'function') {
+    window.restoreSession = function () { return true; };
+}
+if (typeof window.xl !== 'function') {
+    window.xl = function (s) { return s; };
+}
+if (typeof window.dlgopen !== 'function') {
+    window.dlgopen = function (url, winname) {
+        if (url) {
+            window.open(url, winname || '_blank');
+        }
+        return null;
+    };
+}
+if (typeof window.timed_out === 'undefined') {
+    window.timed_out = false;
+}
+    </script>
+    <script>
+    // Encounter iframe's top is this popup (not main/tabs). OpenEMR newpatient + validation call:
+    // top.restoreSession (from restoreSession.php above), top.left_nav, window.top.jsGlobals (submitme).
+    // left_nav.loadFrame navigates #encounterFrame (duplicate Cancel, form Cancel, etc.).
+    (function () {
+        var webroot = <?php echo json_encode(rtrim($GLOBALS['webroot'] ?? '', '/')); ?>;
+        var apptPid = <?php echo json_encode((string)($pid ?? '')); ?>;
+
+        function pahoUnifiedResolveInterfaceUrl(url) {
+            var u = (url || '').toString().trim();
+            if (!u) {
+                return u;
+            }
+            if (/^https?:\/\//i.test(u)) {
+                return u;
+            }
+            u = u.replace(/^\//, '');
+            var base = webroot ? (webroot + '/') : '/';
+            if (u.indexOf('interface/') === 0) {
+                return base + u;
+            }
+            return base + 'interface/' + u;
+        }
+
+        function pahoUnifiedAppendSetPidIfNeeded(src) {
+            if (!apptPid || src.indexOf('set_pid=') !== -1) {
+                return src;
+            }
+            if (src.indexOf('patient_file/encounter/') === -1) {
+                return src;
+            }
+            return src + (src.indexOf('?') !== -1 ? '&' : '?') + 'set_pid=' + encodeURIComponent(apptPid);
+        }
+
+        function pahoUnifiedLoadFrame(id, name, url) {
+            var frame = document.getElementById('encounterFrame');
+            if (!frame) {
+                return;
+            }
+            var src = pahoUnifiedResolveInterfaceUrl(url);
+            frame.src = pahoUnifiedAppendSetPidIfNeeded(src);
+        }
+
+        if (!window.left_nav) {
+            window.left_nav = {};
+        }
+        window.left_nav.setPatientEncounter = window.left_nav.setPatientEncounter || function () {};
+        window.left_nav.setEncounter = window.left_nav.setEncounter || function () {};
+        window.left_nav.syncRadios = window.left_nav.syncRadios || function () {};
+        window.left_nav.removeOptionSelected = window.left_nav.removeOptionSelected || function () {};
+        window.left_nav.clearEncounter = window.left_nav.clearEncounter || function () {};
+        window.left_nav.toggleFrame = window.left_nav.toggleFrame || function () {};
+        window.left_nav.loadFrame = pahoUnifiedLoadFrame;
+
+        if (!window.jsGlobals) {
+            window.jsGlobals = {};
+        }
+        if (typeof window.jsGlobals.date_display_format === 'undefined') {
+            window.jsGlobals.date_display_format = <?php echo json_encode($GLOBALS['date_display_format'] ?? ''); ?>;
+        }
+        if (typeof window.jsGlobals.time_display_format === 'undefined') {
+            window.jsGlobals.time_display_format = <?php echo json_encode($GLOBALS['time_display_format'] ?? ''); ?>;
+        }
+    })();
+    </script>
     <div class="unified-container">
         <!-- Header Bar -->
         <div class="header-bar">
@@ -299,7 +402,7 @@ try {
                     <i class="fa fa-external-link"></i> <?php echo xlt('Open Jitsi in New Tab'); ?>
                 </a>
                 <?php if ($encounterUrl): ?>
-                <a href="<?php echo attr($encounterUrl); ?>" target="_blank">
+                <a href="<?php echo attr($encounterNewTabShimUrl ?: $encounterUrl); ?>" target="_blank">
                     <i class="fa fa-file-text-o"></i> <?php echo xlt('Open Encounter in New Tab'); ?>
                 </a>
                 <?php endif; ?>
