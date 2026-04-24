@@ -97,7 +97,7 @@ try {
     $encounterExists = false;
 
     if ($pid) {
-        $chromeShimBase = $GLOBALS['webroot'] . '/interface/modules/custom_modules/' . basename(dirname(__DIR__)) . '/public/encounter_chrome_shim.php';
+        $chromeShimBase = $GLOBALS['webroot'] . '/interface/modules/custom_modules/' . basename(dirname(__DIR__)) . '/public/televisit_encounter.php';
         // Only open an existing encounter when this televisit room is explicitly linked (paho_jitsi_televisit_rooms.encounter_id).
         // A blanket "any encounter today" match was wrong for televisit: it showed unrelated visits for the same patient.
         $encounter = TelevisitRoomService::getLinkedEncounterRow($room, $pid);
@@ -128,7 +128,7 @@ try {
     $encounterUrl = $pid ? getAbsoluteHttpsUrl('/interface/forms/newpatient/new.php?autoloaded=1&calenc=' . attr_url($pcEid) . '&pid=' . attr_url($pid)) : '';
     $encounterNewTabShimUrl = '';
     if ($pid) {
-        $encounterNewTabShimUrl = $GLOBALS['webroot'] . '/interface/modules/custom_modules/' . basename(dirname(__DIR__)) . '/public/encounter_chrome_shim.php'
+        $encounterNewTabShimUrl = $GLOBALS['webroot'] . '/interface/modules/custom_modules/' . basename(dirname(__DIR__)) . '/public/televisit_encounter.php'
             . '?' . http_build_query([
                 'inner' => 'forms/newpatient/new.php',
                 'autoloaded' => '1',

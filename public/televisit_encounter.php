@@ -1,9 +1,10 @@
 <?php
 
 /**
- * Wraps OpenEMR encounter / new-patient UI in a full-window iframe.
- * Core scripts expect top.restoreSession, top.jsGlobals, and top.left_nav from main/tabs;
- * this parent window defines minimal equivalents so Save/validation work in a standalone tab.
+ * Televisit encounter wrapper (full-window iframe).
+ *
+ * This provides the minimum OpenEMR "chrome" globals (restoreSession/jsGlobals/left_nav)
+ * that core encounter/new-encounter pages expect when opened outside main/tabs.
  *
  * @package OpenEMR\Modules\PahoJitsiTelevisit
  * @license GNU General Public License 3
@@ -137,3 +138,4 @@ if (typeof window.timed_out === 'undefined') {
 <iframe id="pahoEncounterInner" name="enc" src="<?php echo attr($innerUrl); ?>"></iframe>
 </body>
 </html>
+

@@ -380,7 +380,7 @@ class Bootstrap
         $query['inner'] = $innerPath;
 
         return $GLOBALS['webroot'] . '/interface/modules/custom_modules/' . $this->moduleDirectoryName
-            . '/public/encounter_chrome_shim.php?' . http_build_query($query, '', '&', PHP_QUERY_RFC3986);
+            . '/public/televisit_encounter.php?' . http_build_query($query, '', '&', PHP_QUERY_RFC3986);
     }
 
     /**
