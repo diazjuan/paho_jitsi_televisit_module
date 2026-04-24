@@ -31,7 +31,7 @@ class Bootstrap
     /**
      * @var string Module directory name
      */
-    private $moduleDirectoryName = 'paho_jitsi_televisit';
+    private $moduleDirectoryName = 'paho_jitsi_televisit_module';
 
     /**
      * Constructor
