@@ -42,6 +42,16 @@ class Bootstrap
     public function __construct(EventDispatcherInterface $eventDispatcher)
     {
         $this->eventDispatcher = $eventDispatcher;
+
+        // Derive the actual deployed directory name instead of hardcoding it.
+        // Staging deploys this module as "paho_jitsi_televisit" while the repo
+        // folder is "paho_jitsi_televisit_module"; the hardcoded name produced
+        // links to a non-existent path (404). __DIR__ is the src/ folder, so its
+        // parent's basename is the real module directory under custom_modules/.
+        $derived = basename(dirname(__DIR__));
+        if (!empty($derived)) {
+            $this->moduleDirectoryName = $derived;
+        }
     }
 
     /**
