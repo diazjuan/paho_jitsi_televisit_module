@@ -497,125 +497,50 @@ if (typeof window.timed_out === 'undefined') {
             };
         }
 
-        // Monitor Jitsi iframe loading with faster mixed content detection
+        // Monitor Jitsi iframe loading.
+        //
+        // IMPORTANT: Jitsi is served from a DIFFERENT origin than this page
+        // (different host/port), so it is a cross-origin iframe. The browser's
+        // same-origin policy means we can NEVER read jitsiFrame.contentDocument --
+        // any attempt throws. The previous implementation treated that throw as
+        // "embedding blocked / mixed content" and showed the fallback, which hid a
+        // perfectly working Jitsi embed. We must NOT inspect contentDocument.
+        //
+        // The only reliable cross-origin signal is the iframe 'load' event: if it
+        // fires, the navigation succeeded and we hide the loading overlay. If it
+        // never fires within the timeout (TLS/cert failure, network block, etc.)
+        // we surface the popup fallback.
         function monitorJitsiLoad() {
             var jitsiFrame = document.getElementById('jitsiFrame');
             var loadingOverlay = document.getElementById('jitsiLoadingOverlay');
-            var fallbackButton = document.getElementById('fallbackButton');
             var iframeLoaded = false;
-            var mixedContentDetected = false;
-            
-            // Listen for console errors (mixed content warnings)
-            var originalError = console.error;
-            console.error = function() {
-                var message = Array.prototype.slice.call(arguments).join(' ');
-                if (message.indexOf('Mixed Content') !== -1 || 
-                    message.indexOf('mixed content') !== -1 ||
-                    message.indexOf('blocked') !== -1 && message.indexOf('http://') !== -1) {
-                    mixedContentDetected = true;
-                    console.error = originalError; // Restore original
-                    showJitsiFallback();
-                }
-                originalError.apply(console, arguments);
-            };
-            
-            // Check if iframe loaded successfully
-            var checkInterval = setInterval(function() {
-                if (mixedContentDetected) {
-                    clearInterval(checkInterval);
+
+            function markLoaded() {
+                if (iframeLoaded) {
                     return;
                 }
-                
-                try {
-                    // Try to access iframe - if we can, it's loaded
-                    var iframeDoc = jitsiFrame.contentDocument || jitsiFrame.contentWindow.document;
-                    if (iframeDoc && iframeDoc.body) {
-                        // Iframe is accessible and loaded
-                        iframeLoaded = true;
-                        clearInterval(checkInterval);
-                        if (loadingOverlay) {
-                            loadingOverlay.style.display = 'none';
-                        }
-                        console.log('Jitsi iframe loaded successfully');
-                        return;
-                    }
-                } catch (e) {
-                    // Cross-origin or blocked - this is expected
-                    // Check if it's a mixed content issue by checking the iframe src
-                    var iframeSrc = jitsiFrame.src;
-                    if (iframeSrc && iframeSrc.indexOf('https://') === 0) {
-                        // Iframe src is HTTPS but we can't access it, might be mixed content
-                        // Wait a bit more before deciding
-                    }
+                iframeLoaded = true;
+                if (loadingOverlay) {
+                    loadingOverlay.style.display = 'none';
                 }
-            }, 300);
-            
-            // Faster timeout for mixed content detection (3 seconds)
-            setTimeout(function() {
-                if (mixedContentDetected) {
-                    return;
-                }
-                
-                clearInterval(checkInterval);
-                if (loadingOverlay && loadingOverlay.style.display !== 'none' && !iframeLoaded) {
-                    // Check one more time
-                    try {
-                        var iframeDoc = jitsiFrame.contentDocument || jitsiFrame.contentWindow.document;
-                        if (iframeDoc && iframeDoc.body) {
-                            iframeLoaded = true;
-                            if (loadingOverlay) {
-                                loadingOverlay.style.display = 'none';
-                            }
-                            return;
-                        }
-                    } catch (e) {
-                        // Can't access iframe - likely blocked
-                    }
-                    
-                    // Show fallback after 3 seconds if not loaded
-                    showJitsiFallback();
-                }
-            }, 3000);
-            
-            // If iframe loads, hide loading overlay
-            jitsiFrame.addEventListener('load', function() {
-                setTimeout(function() {
-                    if (!mixedContentDetected) {
-                        // Check if we can actually access the content
-                        try {
-                            var iframeDoc = jitsiFrame.contentDocument || jitsiFrame.contentWindow.document;
-                            if (iframeDoc && iframeDoc.body) {
-                                iframeLoaded = true;
-                                if (loadingOverlay) {
-                                    loadingOverlay.style.display = 'none';
-                                }
-                                clearInterval(checkInterval);
-                            } else {
-                                // Loaded but can't access - might be mixed content
-                                setTimeout(function() {
-                                    if (!iframeLoaded) {
-                                        showJitsiFallback();
-                                    }
-                                }, 2000);
-                            }
-                        } catch (e) {
-                            // Can't access - might be mixed content
-                            setTimeout(function() {
-                                if (!iframeLoaded) {
-                                    showJitsiFallback();
-                                }
-                            }, 2000);
-                        }
-                    }
-                }, 1000);
-            });
-            
-            // If iframe errors, show fallback immediately
+                console.log('Jitsi iframe load event fired');
+            }
+
+            jitsiFrame.addEventListener('load', markLoaded);
+
+            // Hard failure (rare): browser fires error on the frame element.
             jitsiFrame.addEventListener('error', function() {
-                clearInterval(checkInterval);
-                mixedContentDetected = true;
                 showJitsiFallback();
             });
+
+            // Safety net: if the load event never fires, the embed could not load
+            // (e.g. the cert does not match the Jitsi host, or the request was
+            // blocked). Offer the popup so the visit can still proceed.
+            setTimeout(function() {
+                if (!iframeLoaded) {
+                    showJitsiFallback();
+                }
+            }, 15000);
         }
         
         // Show fallback when embedding fails (mixed content)
