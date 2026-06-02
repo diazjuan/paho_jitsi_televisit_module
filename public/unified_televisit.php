@@ -497,50 +497,39 @@ if (typeof window.timed_out === 'undefined') {
             };
         }
 
-        // Monitor Jitsi iframe loading.
+        // Manage the Jitsi iframe loading spinner.
         //
         // IMPORTANT: Jitsi is served from a DIFFERENT origin than this page
         // (different host/port), so it is a cross-origin iframe. The browser's
-        // same-origin policy means we can NEVER read jitsiFrame.contentDocument --
-        // any attempt throws. The previous implementation treated that throw as
-        // "embedding blocked / mixed content" and showed the fallback, which hid a
-        // perfectly working Jitsi embed. We must NOT inspect contentDocument.
+        // same-origin policy means we can NEVER read jitsiFrame.contentDocument,
+        // and there is NO reliable way to detect a cross-origin load *failure*
+        // from the parent. Earlier versions tried to infer failure (reading
+        // contentDocument, console sniffing, short timers) and ended up tearing
+        // down a perfectly working video call -- the browser console confirms
+        // lib-jitsi-meet initializes and acquires camera/mic inside the frame.
         //
-        // The only reliable cross-origin signal is the iframe 'load' event: if it
-        // fires, the navigation succeeded and we hide the loading overlay. If it
-        // never fires within the timeout (TLS/cert failure, network block, etc.)
-        // we surface the popup fallback.
+        // Therefore this function ONLY manages the loading spinner. It never
+        // auto-replaces the iframe with a "cannot embed" fallback on a timer.
+        // The always-present "Open Jitsi in New Tab" header link is the manual
+        // escape hatch if a given browser ever refuses to frame the call.
         function monitorJitsiLoad() {
             var jitsiFrame = document.getElementById('jitsiFrame');
             var loadingOverlay = document.getElementById('jitsiLoadingOverlay');
-            var iframeLoaded = false;
 
-            function markLoaded() {
-                if (iframeLoaded) {
-                    return;
-                }
-                iframeLoaded = true;
+            function hideOverlay() {
                 if (loadingOverlay) {
                     loadingOverlay.style.display = 'none';
                 }
-                console.log('Jitsi iframe load event fired');
             }
 
-            jitsiFrame.addEventListener('load', markLoaded);
+            // Hide the spinner when the iframe reports load.
+            jitsiFrame.addEventListener('load', hideOverlay);
 
-            // Hard failure (rare): browser fires error on the frame element.
-            jitsiFrame.addEventListener('error', function() {
-                showJitsiFallback();
-            });
-
-            // Safety net: if the load event never fires, the embed could not load
-            // (e.g. the cert does not match the Jitsi host, or the request was
-            // blocked). Offer the popup so the visit can still proceed.
-            setTimeout(function() {
-                if (!iframeLoaded) {
-                    showJitsiFallback();
-                }
-            }, 15000);
+            // The iframe's load event can fire BEFORE this handler is attached
+            // (Jitsi's document becomes ready well before the parent window's
+            // 'load' event). So also clear the spinner after a short grace period
+            // regardless, so it can never stick on top of a working call.
+            setTimeout(hideOverlay, 4000);
         }
         
         // Show fallback when embedding fails (mixed content)
