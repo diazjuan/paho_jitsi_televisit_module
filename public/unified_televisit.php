@@ -69,13 +69,13 @@ try {
     // Update status to active
     TelevisitRoomService::updateRoomStatus($pcEid, 'active');
 
-    // Get base URL and ensure it's HTTPS
+    // Get base URL. Respect the configured scheme: Jitsi runs over plain HTTP
+    // locally (no SSL certs) and HTTPS in staging/production. Do NOT force HTTPS
+    // here -- upgrading a local http:// config to a non-existent https:// endpoint
+    // breaks both the embed and the popup. Only supply a default scheme when the
+    // admin left it off. Mixed-content (https page + http Jitsi) is handled in JS.
     $baseUrl = TelevisitConfigService::getBaseUrl();
-    // Force HTTPS if not already
-    if (stripos($baseUrl, 'http://') === 0) {
-        $baseUrl = str_replace('http://', 'https://', $baseUrl);
-    } elseif (stripos($baseUrl, 'https://') !== 0) {
-        // If no scheme, add https://
+    if (stripos($baseUrl, 'http://') !== 0 && stripos($baseUrl, 'https://') !== 0) {
         $baseUrl = 'https://' . ltrim($baseUrl, '/');
     }
     $roomUrl = rtrim($baseUrl, '/') . '/' . $room['room_name'];
@@ -673,14 +673,18 @@ if (typeof window.timed_out === 'undefined') {
         
         // Start monitoring when page loads
         window.addEventListener('load', function() {
-            // Check if we're on HTTPS
-            var isHttps = window.location.protocol === 'https:';
             var jitsiUrl = <?php echo json_encode($roomUrl); ?>;
-            
-            // If we're on HTTPS, Jitsi iframe often fails due to mixed content
-            // (Jitsi may load HTTP resources internally)
-            // Automatically open in separate window for better UX
-            if (isHttps) {
+
+            // The only case the browser forbids embedding is mixed content:
+            // an HTTPS page trying to iframe an HTTP resource. Now that Jitsi has
+            // valid SSL certs (staging) -- and on local HTTP setups where there is
+            // no scheme mismatch -- the iframe embeds normally. We force the popup
+            // ONLY for the genuine mixed-content case. monitorJitsiLoad() still
+            // detects any other load failure and offers the popup as a fallback.
+            var isMixedContent = (window.location.protocol === 'https:')
+                && /^http:\/\//i.test(jitsiUrl);
+
+            if (isMixedContent) {
                 // Hide iframe immediately and show placeholder with auto-open option
                 var jitsiIframeContainer = document.getElementById('jitsiIframeContainer');
                 var jitsiPlaceholder = document.getElementById('jitsiPlaceholder');
@@ -714,7 +718,7 @@ if (typeof window.timed_out === 'undefined') {
                     monitorJitsiLoad();
                 }
             } else {
-                // Not HTTPS, should work fine with iframe
+                // No mixed content: embed the Jitsi iframe directly.
                 monitorJitsiLoad();
             }
         });
