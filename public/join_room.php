@@ -8,7 +8,7 @@
  * @license GNU General Public License 3
  */
 
-require_once(__DIR__ . '/../../../globals.php');
+require_once(__DIR__ . '/../../../../globals.php');
 
 use OpenEMR\Common\Acl\AclMain;
 use OpenEMR\Core\ModulesClassLoader;
@@ -22,6 +22,7 @@ $classLoader->registerNamespaceIfNotExists(
 
 use OpenEMR\Modules\PahoJitsiTelevisit\Services\TelevisitRoomService;
 use OpenEMR\Modules\PahoJitsiTelevisit\Services\TelevisitConfigService;
+use OpenEMR\Modules\PahoJitsiTelevisit\Services\TelevisitTokenService;
 
 // Check access control - must be provider/staff
 if (!AclMain::aclCheckCore('patients', 'appt', '', ['write', 'wsome'])) {
@@ -45,9 +46,10 @@ if (!$room) {
 // Update status to active
 TelevisitRoomService::updateRoomStatus($pcEid, 'active');
 
-// Get base URL
-$baseUrl = TelevisitConfigService::getBaseUrl();
-$roomUrl = rtrim($baseUrl, '/') . '/' . $room['room_name'];
+// Mint a fresh moderator token for this provider and build the room URL.
+// The provider is the logged-in staff member; the display name is non-security.
+$providerName = TelevisitRoomService::getProviderDisplayName($room['provider_id'] ?? null);
+$roomUrl = TelevisitTokenService::buildAuthenticatedRoomUrl($room['room_name'], $providerName, true);
 
 ?>
 <!DOCTYPE html>

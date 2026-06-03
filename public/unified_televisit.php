@@ -28,6 +28,7 @@ $classLoader->registerNamespaceIfNotExists(
 
 use OpenEMR\Modules\PahoJitsiTelevisit\Services\TelevisitRoomService;
 use OpenEMR\Modules\PahoJitsiTelevisit\Services\TelevisitConfigService;
+use OpenEMR\Modules\PahoJitsiTelevisit\Services\TelevisitTokenService;
 
 // Absolute URL for same-origin iframes/assets (must match page scheme or browser load fails).
 function getAbsoluteHttpsUrl($relativePath) {
@@ -78,10 +79,18 @@ try {
     if (stripos($baseUrl, 'http://') !== 0 && stripos($baseUrl, 'https://') !== 0) {
         $baseUrl = 'https://' . ltrim($baseUrl, '/');
     }
-    $roomUrl = rtrim($baseUrl, '/') . '/' . $room['room_name'];
+    // Mint a moderator token for this provider (the page is ACL-gated to provider/staff
+    // above) and append it to the room URL. We deliberately reuse this page's own
+    // scheme-respecting base URL rather than the https-forcing helper, so the
+    // mixed-content / loading-overlay logic below behaves exactly as before -- the only
+    // change is the added ?jwt= token. The same $roomUrl feeds the iframe, the popup
+    // fallback, and the "Open in New Tab" link, so a single token is minted and reused.
+    $providerName = TelevisitRoomService::getProviderDisplayName($room['provider_id'] ?? null);
+    $jwt = TelevisitTokenService::mintToken($room['room_name'], $providerName, true);
+    $roomUrl = rtrim($baseUrl, '/') . '/' . $room['room_name'] . '?jwt=' . rawurlencode($jwt);
 } catch (\Exception $e) {
     error_log("[PAHO Jitsi Televisit] Error in unified_televisit.php: " . $e->getMessage());
-    die(xlt('Error loading televisit session. Please contact support. Details: ') . $e->getMessage());
+    die(xlt('Error loading televisit session. Please contact support.'));
 }
 
 try {
@@ -636,10 +645,6 @@ if (typeof window.timed_out === 'undefined') {
                 monitorJitsiLoad();
             }
         });
-
-        // Auto-launch Jitsi when page loads (optional - can be disabled)
-        // Uncomment the line below to auto-launch Jitsi on page load
-        // window.addEventListener('load', function() { setTimeout(launchJitsi, 500); });
 
         // Resizer functionality for split view
         var resizer = document.getElementById('resizer');

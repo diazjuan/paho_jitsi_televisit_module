@@ -1,0 +1,2 @@
+# Local-only test harness — not shipped with the module.
+tests/

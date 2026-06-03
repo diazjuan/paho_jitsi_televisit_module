@@ -43,6 +43,27 @@ class TelevisitRoomService
     }
 
     /**
+     * Resolve a human-friendly display name for a provider/user, used as the
+     * non-security display label in a moderator token. Falls back to "Provider".
+     *
+     * @param int|string|null $providerId users.id
+     * @return string
+     */
+    public static function getProviderDisplayName($providerId)
+    {
+        if ($providerId !== null && $providerId !== '' && (int)$providerId > 0) {
+            $user = sqlQuery("SELECT fname, lname FROM users WHERE id = ?", [(int)$providerId]);
+            if ($user) {
+                $name = trim(($user['fname'] ?? '') . ' ' . ($user['lname'] ?? ''));
+                if ($name !== '') {
+                    return $name;
+                }
+            }
+        }
+        return 'Provider';
+    }
+
+    /**
      * Get or create room for an appointment
      *
      * @param int $pcEid Appointment ID (pc_eid)
@@ -131,7 +152,7 @@ class TelevisitRoomService
     public static function updateRoomStatus($pcEid, $status)
     {
         $allowedStatuses = ['scheduled', 'active', 'completed', 'cancelled'];
-        if (!in_array($status, $allowedStatuses)) {
+        if (!in_array($status, $allowedStatuses, true)) {
             return false;
         }
 

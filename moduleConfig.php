@@ -24,6 +24,7 @@ $classLoader->registerNamespaceIfNotExists(
 );
 
 use OpenEMR\Modules\PahoJitsiTelevisit\Services\TelevisitConfigService;
+use OpenEMR\Modules\PahoJitsiTelevisit\Services\TelevisitTokenService;
 
 // Check admin access
 if (!AclMain::aclCheckCore('admin', 'super')) {
@@ -42,12 +43,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($_POST['save_config'])) {
         CsrfUtils::csrfNotVerified();
     }
 
+    // JWT secret/app-id are sourced from the environment (.env) and shown read-only
+    // in the JWT status section below, so they are intentionally NOT saved from this
+    // form (saving '' would otherwise clobber the env->DB mirror).
     $config = [
         'base_url' => trim($_POST['base_url'] ?? ''),
         'category_id' => (int)($_POST['category_id'] ?? 0),
         'room_naming' => $_POST['room_naming'] ?? 'deterministic',
-        'jwt_secret' => trim($_POST['jwt_secret'] ?? ''),
-        'jwt_app_id' => trim($_POST['jwt_app_id'] ?? 'paho-jitsi-televisit'),
     ];
 
     if (empty($config['base_url'])) {
@@ -58,6 +60,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($_POST['save_config'])) {
         } else {
             $saveError = xlt('Error saving configuration');
         }
+    }
+}
+
+// Optional diagnostic: let an admin mint + decode a sample token to confirm the
+// signing secret works end to end. The secret itself is never revealed.
+$testTokenClaims = '';
+$testTokenError = '';
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($_POST['mint_test_token'])) {
+    if (!CsrfUtils::verifyCsrfToken($_POST['csrf_token_form'])) {
+        CsrfUtils::csrfNotVerified();
+    }
+    try {
+        if (!TelevisitConfigService::isJwtConfigured()) {
+            $testTokenError = xlt('JWT secret is not configured.');
+        } else {
+            $sampleToken = TelevisitTokenService::mintToken('test-room', 'Test User', true);
+            $decodedClaims = TelevisitTokenService::verifyToken($sampleToken, 'test-room');
+            $testTokenClaims = json_encode($decodedClaims, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+        }
+    } catch (\Throwable $e) {
+        $testTokenError = xlt('Could not mint test token') . ': ' . $e->getMessage();
     }
 }
 
@@ -223,34 +246,45 @@ try {
                         </div>
                     </div>
 
-                    <!-- JWT Configuration (Future) -->
+                    <!-- JWT Authentication Status (environment-sourced; read-only) -->
                     <div class="config-section">
-                        <h3><?php echo xlt('JWT Authentication (Future)'); ?></h3>
-                        <div class="info-box">
-                            <i class="fa fa-info-circle"></i>
-                            <?php echo xlt('JWT authentication is not yet implemented. These fields are reserved for future use.'); ?>
+                        <h3><?php echo xlt('JWT Authentication'); ?></h3>
+                        <?php
+                        $jwtConfigured = TelevisitConfigService::isJwtConfigured();
+                        $jwtAppId = TelevisitConfigService::getJwtAppId();
+                        $jwtSecretFromEnv = TelevisitConfigService::getEnvValue(TelevisitConfigService::ENV_JWT_SECRET) !== null;
+                        $jwtAppIdFromEnv = TelevisitConfigService::getEnvValue(TelevisitConfigService::ENV_JWT_APP_ID) !== null;
+                        ?>
+                        <div class="info-box" style="background: <?php echo $jwtConfigured ? '#d4edda' : '#f8d7da'; ?>; border-left-color: <?php echo $jwtConfigured ? '#28a745' : '#dc3545'; ?>;">
+                            <i class="fa <?php echo $jwtConfigured ? 'fa-check-circle' : 'fa-exclamation-triangle'; ?>"></i>
+                            <strong><?php echo xlt('Status'); ?>:</strong>
+                            <?php if ($jwtConfigured): ?>
+                                <?php echo xlt('Token authentication is configured.'); ?>
+                            <?php else: ?>
+                                <?php echo xlt('Not configured — set JWT_APP_SECRET in the environment (.env).'); ?>
+                            <?php endif; ?>
                         </div>
 
                         <div class="form-group">
-                            <label for="jwt_secret"><?php echo xlt('JWT Secret'); ?></label>
-                            <input type="text" 
-                                   id="jwt_secret" 
-                                   name="jwt_secret" 
-                                   value="<?php echo attr($currentConfig['jwt_secret']); ?>"
-                                   disabled>
+                            <label><?php echo xlt('Signing secret'); ?></label>
                             <div class="help-text">
-                                <?php echo xlt('Future: JWT secret for signing tokens (currently disabled)'); ?>
+                                <?php if ($jwtConfigured): ?>
+                                    <i class="fa fa-lock"></i>
+                                    <?php echo xlt('Configured (value hidden for security)'); ?>
+                                    — <?php echo xlt('source'); ?>:
+                                    <code><?php echo text($jwtSecretFromEnv ? 'environment' : 'database'); ?></code>
+                                <?php else: ?>
+                                    <?php echo xlt('Not set'); ?>
+                                <?php endif; ?>
                             </div>
                         </div>
 
                         <div class="form-group">
-                            <label for="jwt_app_id"><?php echo xlt('JWT App ID'); ?></label>
-                            <input type="text" 
-                                   id="jwt_app_id" 
-                                   name="jwt_app_id" 
-                                   value="<?php echo attr($currentConfig['jwt_app_id']); ?>">
+                            <label><?php echo xlt('JWT App ID'); ?></label>
                             <div class="help-text">
-                                <?php echo xlt('Application ID for JWT tokens'); ?>
+                                <code><?php echo text($jwtAppId); ?></code>
+                                — <?php echo xlt('source'); ?>:
+                                <code><?php echo text($jwtAppIdFromEnv ? 'environment' : 'database'); ?></code>
                             </div>
                         </div>
                     </div>
@@ -260,11 +294,37 @@ try {
                         <button type="submit" class="btn btn-primary">
                             <i class="fa fa-save"></i> <?php echo xlt('Save Configuration'); ?>
                         </button>
-                        <a href="<?php echo $GLOBALS['webroot']; ?>/interface/modules/zend_modules/module/Installer/Installer.php" class="btn btn-secondary">
+                        <a href="<?php echo attr($GLOBALS['webroot']); ?>/interface/modules/zend_modules/module/Installer/Installer.php" class="btn btn-secondary">
                             <?php echo xlt('Back to Modules'); ?>
                         </a>
                     </div>
                 </form>
+
+                <!-- Optional diagnostic: mint + decode a sample token (separate form so it
+                     never triggers a config save). The secret is never displayed. -->
+                <div class="config-section">
+                    <h3><?php echo xlt('JWT Diagnostics'); ?></h3>
+                    <form method="post" action="">
+                        <input type="hidden" name="csrf_token_form" value="<?php echo attr(CsrfUtils::collectCsrfToken()); ?>">
+                        <input type="hidden" name="mint_test_token" value="1">
+                        <button type="submit" class="btn btn-secondary">
+                            <i class="fa fa-flask"></i> <?php echo xlt('Mint test token'); ?>
+                        </button>
+                        <div class="help-text">
+                            <?php echo xlt('Mints and decodes a sample token (room "test-room") to confirm the signing secret works. The secret itself is never shown.'); ?>
+                        </div>
+                    </form>
+                    <?php if ($testTokenError): ?>
+                        <div class="alert alert-danger" style="margin-top: 15px;">
+                            <i class="fa fa-exclamation-triangle"></i> <?php echo text($testTokenError); ?>
+                        </div>
+                    <?php elseif ($testTokenClaims !== ''): ?>
+                        <div class="alert alert-success" style="margin-top: 15px;">
+                            <i class="fa fa-check-circle"></i> <?php echo xlt('Sample token verified. Decoded claims:'); ?>
+                        </div>
+                        <pre style="background: #f6f8fa; border: 1px solid #ddd; border-radius: 4px; padding: 12px; overflow-x: auto;"><?php echo text($testTokenClaims); ?></pre>
+                    <?php endif; ?>
+                </div>
             </div>
         </div>
     </div>

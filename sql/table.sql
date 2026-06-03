@@ -27,6 +27,8 @@ CREATE TABLE `paho_jitsi_televisit_rooms` (
 #EndIf
 
 -- Insert default configuration values into globals table
+-- Default base URL is the staging Jitsi host; admins override it in module config
+-- (mirrors the fallback in TelevisitConfigService::getBaseUrl).
 #IfNotRow globals gl_name paho_jitsi_base_url
 INSERT INTO `globals` (`gl_name`, `gl_value`) VALUES ('paho_jitsi_base_url', 'https://169.61.173.4:8440');
 #EndIf

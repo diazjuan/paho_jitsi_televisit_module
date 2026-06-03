@@ -4,9 +4,6 @@
  * Bootstrap class for PAHO Jitsi Televisit Module
  * Uses official OpenEMR event system to inject UI without modifying core files
  *
- * FIXED VERSION - Resolves pid=0 validation bug. 
- * https://claude.ai/chat/0b74eb32-1668-48d5-818a-2d7fdd4aefa1
- *
  * @package OpenEMR\Modules\PahoJitsiTelevisit
  * @license GNU General Public License 3
  */
@@ -59,6 +56,14 @@ class Bootstrap
      */
     public function subscribeToEvents()
     {
+        // Mirror env-provided JWT secret/app-id into globals so code paths that
+        // cannot read the process environment still resolve them via DB fallback.
+        try {
+            TelevisitConfigService::mirrorJwtEnvToDb();
+        } catch (\Exception $e) {
+            error_log("[PAHO Jitsi Televisit] JWT env mirror failed: " . $e->getMessage());
+        }
+
         // Hook into appointment creation/update to generate rooms
         $this->eventDispatcher->addListener(
             AppointmentSetEvent::EVENT_HANDLE,
@@ -101,13 +106,7 @@ class Bootstrap
         $appointmentData = $event->givenAppointmentData();
         $pcEid = $event->eid ?? null;
 
-        // DEBUG LOGGING (can be removed in production)
-        error_log("[PAHO DEBUG] onAppointmentSet triggered");
-        error_log("[PAHO DEBUG] pc_eid: " . ($pcEid ?? 'NULL'));
-        error_log("[PAHO DEBUG] Event data keys: " . implode(", ", array_keys($appointmentData)));
-
         if (!$pcEid) {
-            error_log("[PAHO DEBUG] No pc_eid, exiting");
             return;
         }
 
@@ -120,16 +119,12 @@ class Bootstrap
         );
 
         if (!$appointment) {
-            error_log("[PAHO DEBUG] Appointment not found in database for pc_eid: $pcEid");
             return;
         }
-
-        error_log("[PAHO DEBUG] Appointment from DB: " . print_r($appointment, true));
 
         // Check if this is a Televisit category
         $catid = $appointment['pc_catid'] ?? null;
         if (!TelevisitConfigService::isTelevisitCategory($catid)) {
-            error_log("[PAHO DEBUG] Not a televisit category (catid: $catid)");
             return;
         }
 
@@ -139,38 +134,29 @@ class Bootstrap
         $appointmentDate = $appointment['pc_eventDate'] ?? null;
         $appointmentTime = $appointment['pc_startTime'] ?? null;
 
-        // ✅ FIXED VALIDATION: Explicitly check for valid values
-        // Don't use loose comparison (!$pid) because 0 is falsy in PHP
+        // pid 0 is falsy in PHP; reject it explicitly rather than with !$pid.
         if ($pid === null || $pid === '' || $pid === 0) {
-            error_log("[PAHO DEBUG] Invalid patient ID: pid=" . var_export($pid, true));
             return;
         }
 
         if ($providerId === null || $providerId === '') {
-            error_log("[PAHO DEBUG] Invalid provider ID: providerId=" . var_export($providerId, true));
             return;
         }
 
         if (empty($appointmentDate) || empty($appointmentTime)) {
-            error_log("[PAHO DEBUG] Missing appointment date/time: date=$appointmentDate, time=$appointmentTime");
             return;
         }
 
-        // All validations passed - create the room
-        error_log("[PAHO DEBUG] Creating room for: eid=$pcEid, pid=$pid, provider=$providerId, date=$appointmentDate, time=$appointmentTime");
-
         try {
-            $room = TelevisitRoomService::getOrCreateRoom(
+            TelevisitRoomService::getOrCreateRoom(
                 $pcEid,
                 $pid,
                 $providerId,
                 $appointmentDate,
                 $appointmentTime
             );
-            error_log("[PAHO DEBUG] Room created successfully: " . print_r($room, true));
         } catch (\Exception $e) {
             error_log("[PAHO Jitsi Televisit] Error creating room: " . $e->getMessage());
-            error_log("[PAHO DEBUG] Exception trace: " . $e->getTraceAsString());
         }
     }
 
@@ -181,11 +167,8 @@ class Bootstrap
      */
     public function injectAppointmentButton(AppointmentRenderEvent $event)
     {
-        error_log("[PAHO DEBUG] injectAppointmentButton called");
-        
         $appointmentData = $event->getAppt();
-        error_log("[PAHO DEBUG] Appointment data: " . print_r($appointmentData, true));
-        
+
         $pcEid = $appointmentData['pc_eid'] ?? $_GET['eid'] ?? $_POST['eid'] ?? null;
         
         // If we have an EID but missing data, fetch from database
@@ -199,20 +182,17 @@ class Bootstrap
         $catid = $appointmentData['pc_catid'] ?? null;
 
         if (!$pcEid || !TelevisitConfigService::isTelevisitCategory($catid)) {
-            error_log("[PAHO DEBUG] Not rendering button: pcEid=$pcEid, catid=$catid");
             return;
         }
 
         $room = TelevisitRoomService::getRoomByAppointment($pcEid);
         if (!$room) {
-            error_log("[PAHO DEBUG] No room found for appointment $pcEid");
             return;
         }
 
-        error_log("[PAHO DEBUG] Rendering Televisit button for appointment $pcEid");
-
         $uniqueId = 'paho_televisit_' . $pcEid;
-        $roomUrl = $room['room_url'];
+        // No raw room URL is exposed; provider entry routes through join_room.php,
+        // which mints a fresh moderator token (?jwt=) before opening the room.
         $joinUrl = $GLOBALS['webroot'] . '/interface/modules/custom_modules/' . $this->moduleDirectoryName . '/public/join_room.php?eid=' . attr_url($pcEid);
         
         // Get patient ID and check for existing encounter
@@ -260,37 +240,9 @@ class Bootstrap
 
             <!-- Content (Initially collapsed) -->
             <div id="<?php echo attr($uniqueId); ?>_content" class="d-none" style="padding: 15px; background: #f8faff;">
-                <!-- Room URL Section -->
-                <div style="margin-bottom: 15px; padding: 12px; background: white; border: 1px solid #d1e0ff; border-radius: 6px;">
-                    <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
-                        <i class="fa fa-link" style="color: #0066cc; font-size: 16px;"></i>
-                        <label style="margin: 0; color: #0066cc; font-weight: 600; font-size: 14px;">
-                            <?php echo xlt('Room URL'); ?>
-                        </label>
-                    </div>
-                    <div style="display: flex; gap: 8px; align-items: stretch;">
-                        <input type="text"
-                               id="<?php echo attr($uniqueId); ?>_room_url"
-                               value="<?php echo attr($roomUrl); ?>"
-                               readonly
-                               style="flex: 1; padding: 8px 10px; border: 1px solid #b3d1ff; border-radius: 4px; background: #f0f7ff; font-size: 12px; font-family: monospace; color: #333;">
-                        <button class="btn btn-sm"
-                                onclick="pahoTelevisitCopyLink('<?php echo attr($uniqueId); ?>_room_url', '<?php echo xla('✓ Room URL copied'); ?>')"
-                                style="padding: 8px 16px; background: #0066cc; color: white; border: none; border-radius: 4px; font-weight: 600; display: inline-flex; align-items: center; gap: 5px; white-space: nowrap;">
-                            <i class="fa fa-copy"></i> <?php echo xlt('Copy'); ?>
-                        </button>
-                        <a href="<?php echo attr($roomUrl); ?>"
-                           target="_blank"
-                           class="btn btn-sm"
-                           style="padding: 8px 16px; background: #28a745; color: white; border: none; border-radius: 4px; font-weight: 600; display: inline-flex; align-items: center; gap: 5px; text-decoration: none; white-space: nowrap;">
-                            <i class="fa fa-external-link"></i> <?php echo xlt('Open'); ?>
-                        </a>
-                    </div>
-                </div>
-
                 <!-- Join Televisit Button -->
                 <div style="margin-bottom: 12px;">
-                    <button onclick="window.open('<?php echo $GLOBALS['webroot']; ?>/interface/modules/custom_modules/<?php echo $this->moduleDirectoryName; ?>/public/unified_televisit.php?eid=<?php echo attr_url($pcEid); ?>', 'unified_televisit_window', 'width=1400,height=800,resizable=yes,scrollbars=yes')"
+                    <button onclick="window.open('<?php echo attr($GLOBALS['webroot']); ?>/interface/modules/custom_modules/<?php echo attr($this->moduleDirectoryName); ?>/public/unified_televisit.php?eid=<?php echo attr_url($pcEid); ?>', 'unified_televisit_window', 'width=1400,height=800,resizable=yes,scrollbars=yes')"
                             class="btn btn-primary btn-sm"
                             style="width: 100%; padding: 10px; background: #0066cc; color: white; border: none; border-radius: 4px; font-weight: 600;">
                         <i class="fa fa-video-camera"></i> <?php echo xlt('Open Unified Televisit View'); ?>
@@ -303,7 +255,7 @@ class Bootstrap
                 <!-- Alternative: Separate Buttons -->
                 <div style="margin-bottom: 12px; display: flex; gap: 8px;">
                     <button class="btn btn-sm"
-                            onclick="window.open('<?php echo attr($roomUrl); ?>', 'jitsi_televisit', 'width=1280,height=720,resizable=yes')"
+                            onclick="window.open('<?php echo attr($joinUrl); ?>', 'jitsi_televisit', 'width=1280,height=720,resizable=yes')"
                             style="flex: 1; padding: 8px; background: #0066cc; color: white; border: none; border-radius: 4px; font-weight: 600;">
                         <i class="fa fa-video-camera"></i> <?php echo xlt('Jitsi Only'); ?>
                     </button>
@@ -337,38 +289,6 @@ class Bootstrap
             </div>
         </div>
 
-        <!-- JavaScript for copy and embed functionality -->
-        <script>
-        function pahoTelevisitCopyLink(inputId, successMessage) {
-            var input = document.getElementById(inputId);
-            if (!input) {
-                alert('<?php echo xla('Error: Field not found'); ?>');
-                return;
-            }
-
-            input.select();
-            input.setSelectionRange(0, 99999);
-
-            try {
-                var success = document.execCommand('copy');
-                if (success) {
-                    alert(successMessage);
-                } else {
-                    throw new Error('copy failed');
-                }
-            } catch (err) {
-                if (navigator.clipboard) {
-                    navigator.clipboard.writeText(input.value).then(function() {
-                        alert(successMessage);
-                    }).catch(function() {
-                        alert('<?php echo xla('Error copying. Please copy manually.'); ?>');
-                    });
-                } else {
-                    alert('<?php echo xla('Please copy the link manually'); ?>');
-                }
-            }
-        }
-        </script>
         <?php
     }
 

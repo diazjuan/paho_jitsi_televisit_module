@@ -39,6 +39,7 @@ $classLoader->registerNamespaceIfNotExists(
 
 use OpenEMR\Modules\PahoJitsiTelevisit\Services\TelevisitRoomService;
 use OpenEMR\Modules\PahoJitsiTelevisit\Services\TelevisitConfigService;
+use OpenEMR\Modules\PahoJitsiTelevisit\Services\TelevisitTokenService;
 
 $pcEid = $_GET['eid'] ?? null;
 if (!$pcEid) {
@@ -53,13 +54,16 @@ try {
         die(xlt('Room not found for this appointment'));
     }
 
-    if ($room['pid'] != $pid) {
+    if ((int)$room['pid'] !== (int)$pid) {
         http_response_code(403);
         die(xlt('Access Denied. This appointment does not belong to you.'));
     }
 
-    $baseUrl = TelevisitConfigService::getBaseUrl();
-    $roomUrl = rtrim($baseUrl, '/') . '/' . $room['room_name'];
+    // Mint a fresh non-moderator (guest) token for this patient and build the room URL.
+    // The display label is intentionally non-identifying ("Patient"): the JWT payload is
+    // signed (not encrypted) and readable in the URL/logs, so it must never carry pid,
+    // MRN, DOB or any patient identifier. Ownership is already enforced above.
+    $roomUrl = TelevisitTokenService::buildAuthenticatedRoomUrl($room['room_name'], 'Patient', false);
 } catch (\Exception $e) {
     error_log("PAHO Jitsi Televisit Portal Error: " . $e->getMessage());
     http_response_code(500);
