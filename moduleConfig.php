@@ -13,6 +13,7 @@ require_once(__DIR__ . "/../../../globals.php");
 
 use OpenEMR\Common\Acl\AclMain;
 use OpenEMR\Common\Csrf\CsrfUtils;
+use OpenEMR\Common\Session\SessionWrapperFactory;
 use OpenEMR\Core\Header;
 use OpenEMR\Core\ModulesClassLoader;
 
@@ -34,12 +35,15 @@ if (!AclMain::aclCheckCore('admin', 'super')) {
 
 $module_config = 1;
 
+// OpenEMR 8.3 requires the active session to be passed to the CSRF helpers.
+$session = SessionWrapperFactory::getInstance()->getActiveSession();
+
 // Handle form submission
 $saveMessage = '';
 $saveError = '';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($_POST['save_config'])) {
-    if (!CsrfUtils::verifyCsrfToken($_POST['csrf_token_form'])) {
+    if (!CsrfUtils::verifyCsrfToken($_POST['csrf_token_form'], $session)) {
         CsrfUtils::csrfNotVerified();
     }
 
@@ -68,7 +72,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($_POST['save_config'])) {
 $testTokenClaims = '';
 $testTokenError = '';
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($_POST['mint_test_token'])) {
-    if (!CsrfUtils::verifyCsrfToken($_POST['csrf_token_form'])) {
+    if (!CsrfUtils::verifyCsrfToken($_POST['csrf_token_form'], $session)) {
         CsrfUtils::csrfNotVerified();
     }
     try {
@@ -195,7 +199,7 @@ try {
                 <?php endif; ?>
 
                 <form method="post" action="">
-                    <input type="hidden" name="csrf_token_form" value="<?php echo attr(CsrfUtils::collectCsrfToken()); ?>">
+                    <input type="hidden" name="csrf_token_form" value="<?php echo attr(CsrfUtils::collectCsrfToken($session)); ?>">
                     <input type="hidden" name="save_config" value="1">
 
                     <!-- Basic Configuration -->
@@ -305,7 +309,7 @@ try {
                 <div class="config-section">
                     <h3><?php echo xlt('JWT Diagnostics'); ?></h3>
                     <form method="post" action="">
-                        <input type="hidden" name="csrf_token_form" value="<?php echo attr(CsrfUtils::collectCsrfToken()); ?>">
+                        <input type="hidden" name="csrf_token_form" value="<?php echo attr(CsrfUtils::collectCsrfToken($session)); ?>">
                         <input type="hidden" name="mint_test_token" value="1">
                         <button type="submit" class="btn btn-secondary">
                             <i class="fa fa-flask"></i> <?php echo xlt('Mint test token'); ?>

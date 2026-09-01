@@ -22,8 +22,8 @@ require_once(__DIR__ . '/../../../../../portal/verify_session.php');
 $srcdir = $globalsBag->getString('srcdir');
 require_once(__DIR__ . '/../../../../../interface/globals.php');
 
-$session = SessionWrapperFactory::getInstance()->getWrapper();
-$pid = $session->get('pid') ?? $_SESSION['pid'] ?? null;
+$session = SessionWrapperFactory::getInstance()->getActiveSession();
+$pid = $session->get('pid');
 
 if (empty($pid)) {
     http_response_code(403);
