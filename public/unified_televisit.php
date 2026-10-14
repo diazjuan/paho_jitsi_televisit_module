@@ -11,6 +11,7 @@
 require_once(__DIR__ . '/../../../../globals.php');
 
 use OpenEMR\Common\Acl\AclMain;
+use OpenEMR\Core\Header;
 use OpenEMR\Core\ModulesClassLoader;
 
 // Check access control - must be provider/staff
@@ -155,6 +156,12 @@ try {
     <title><?php echo xlt('Televisit - Room'); ?> <?php echo text($room['room_name']); ?></title>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <?php
+    // Core dlgopen() builds iframe dialogs with top.jQuery and Bootstrap's modal plugin.
+    // This popup is the top window for the encounter iframe, so it must load both.
+    // Loaded before the page styles below so those keep precedence over the theme.
+    Header::setupHeader();
+    ?>
     <link rel="stylesheet" href="<?php echo getAbsoluteHttpsUrl('/public/assets/fontawesome/css/font-awesome.min.css'); ?>">
     <style>
         * {
@@ -332,6 +339,20 @@ if (typeof window.dlgopen !== 'function') {
 }
 if (typeof window.timed_out === 'undefined') {
     window.timed_out = false;
+}
+// library/dialog.js reads top.webroot_url and registers each dialog through top.set_opener;
+// include_opener.js in the dialog page reads it back through top.get_opener.
+if (typeof window.webroot_url === 'undefined') {
+    window.webroot_url = <?php echo json_encode(rtrim($GLOBALS['webroot'] ?? '', '/')); ?>;
+}
+if (typeof window.set_opener !== 'function') {
+    window.opener_list = [];
+    window.set_opener = function (winname, openerWindow) {
+        window.opener_list[winname] = openerWindow;
+    };
+    window.get_opener = function (winname) {
+        return window.opener_list[winname];
+    };
 }
     </script>
     <script>
