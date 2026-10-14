@@ -14,6 +14,7 @@ $sessionAllowWrite = true;
 require_once(__DIR__ . '/../../../../globals.php');
 
 use OpenEMR\Common\Acl\AclMain;
+use OpenEMR\Core\Header;
 
 if (!AclMain::aclCheckCore('patients', 'appt', '', ['write', 'wsome'])) {
     echo xlt('Access Denied');
@@ -47,6 +48,11 @@ if ($params !== []) {
 <head>
     <meta charset="utf-8">
     <title><?php echo xlt('Encounter'); ?></title>
+    <?php
+    // Core dlgopen() builds iframe dialogs with top.jQuery and Bootstrap's modal plugin.
+    // This wrapper is the top window when opened in its own tab, so it must load both.
+    Header::setupHeader();
+    ?>
     <style>
         html, body { height: 100%; margin: 0; }
         #pahoEncounterInner { width: 100%; height: 100vh; border: 0; display: block; }
@@ -69,6 +75,20 @@ if (typeof window.dlgopen !== 'function') {
 }
 if (typeof window.timed_out === 'undefined') {
     window.timed_out = false;
+}
+// library/dialog.js reads top.webroot_url and registers each dialog through top.set_opener;
+// include_opener.js in the dialog page reads it back through top.get_opener.
+if (typeof window.webroot_url === 'undefined') {
+    window.webroot_url = <?php echo json_encode(rtrim($GLOBALS['webroot'] ?? '', '/')); ?>;
+}
+if (typeof window.set_opener !== 'function') {
+    window.opener_list = [];
+    window.set_opener = function (winname, openerWindow) {
+        window.opener_list[winname] = openerWindow;
+    };
+    window.get_opener = function (winname) {
+        return window.opener_list[winname];
+    };
 }
     </script>
     <script>
